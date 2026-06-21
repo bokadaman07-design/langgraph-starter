@@ -26,7 +26,9 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     services = build_services()
-    result = ParcleIngestionService(services.parcle, args.project_path).ingest(args.dry_run)
+    result = ParcleIngestionService(
+        services.parcle, args.project_path, settings.parcle_memory_dir
+    ).ingest(args.dry_run)
     print(json.dumps(result, indent=2, default=str))
 
 

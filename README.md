@@ -2,9 +2,8 @@
 
 A FastAPI and LangGraph service that turns a production incident into a documented, tested, locally committed
 remediation in an existing Employee Portal repository. It searches Parcle memory, uses Groq for evidence-based
-analysis and implementation planning, delegates the edit to Enter Pro, validates the result, and records an audit trail.
-
-The workflow intentionally **does not push**. A human reviews the local incident branch and pushes it later.
+analysis and implementation planning, delegates the edit to Enter Pro, validates the result, records an audit trail,
+and can push an incident branch plus open a pull request when GitHub settings are configured.
 
 ## Workflow
 
@@ -21,15 +20,18 @@ flowchart TD
     H --> I[Append decision log]
     I --> J[Sync decision to Parcle]
     J --> K[Commit locally]
-    K --> M[Return summary]
+    K --> M[Push branch]
+    M --> N[Create pull request]
+    N --> O[Return summary]
 ```
 
 Each node is small and dependency-injected. External systems live under `app/integrations`, Pydantic boundary
 models under `app/models`, prompt policy under `app/prompts`, and the extensible graph state under `app/graph`.
 
-Parcle is the repository memory layer. The one-time seed command uploads the target repo's `README.md`,
-`API_DOCUMENTATION.md`, and `PARCLE_MEMORY.md` with `client.ingest_file(...)`. Each successful incident decision is
-also written back with `client.ingest_dialog(...)`. At runtime, every user request searches Parcle first; Groq then
+Parcle is the repository memory layer. The one-time seed command uploads Markdown files from `PARCLE_MEMORY_DIR`
+inside the target repo with `client.ingest_file(...)`. If that folder does not exist yet, the script falls back to
+root-level `README.md`, `API_DOCUMENTATION.md`, and `PARCLE_MEMORY.md`. Each successful incident report is saved back
+under `PARCLE_MEMORY_DIR/incidents/` and ingested into Parcle. At runtime, every user request searches Parcle first; Groq then
 decides from the request plus Parcle response whether this is an informational answer or a repo-level code change.
 Enter is called only for repo-level code-change requests.
 
@@ -38,8 +40,12 @@ Enter is called only for repo-level code-change requests.
 Copy `.env.example` to `.env` and provide the real Parcle, Groq, Enter Pro, and Employee Portal values. Important:
 
 - `EMPLOYEE_PORTAL_PATH` must point to an existing local Git repository.
+- `PARCLE_MEMORY_DIR` defaults to `docs/parcle_memory`; repo docs and incident reports stored there are committed and can sync through GitHub.
 - `VALIDATION_COMMAND` is run inside that repository after Enter Pro edits it.
-- `ENABLE_GIT_PUSH` defaults to `false` and is retained as an explicit safety setting; this workflow never invokes push.
+- `REQUIRE_CLEAN_TARGET_REPO` defaults to `false`, allowing the workflow to continue from prior incident edits that are still uncommitted.
+- `ENABLE_GIT_PUSH=true` pushes the incident branch after commit.
+- `GITHUB_TOKEN` or `GH_TOKEN` is required to create a pull request.
+- `GITHUB_BASE_BRANCH` defaults to `main`.
 - `PARCLE_API_KEY` is used by the official `parcle` SDK.
 - `PARCLE_USER_ID` defaults to `system_user`. Seed this user once with the Employee Portal documentation, then every incident search and decision sync uses the same memory user.
 - `ENTERPRO_COMMAND` optionally overrides the Enter Code command. Leave it blank to use the built-in command:
@@ -81,13 +87,23 @@ When running with Docker, the Enter CLI must be installed inside the image/conta
 machine is not visible to the `incident-agent` container. While wiring up Enter for the first time, running locally with
 `uvicorn app.main:app --reload --port 8001` is usually simpler than Docker because it uses your host PATH.
 
-## Seed Parcle memory
+## Seed Parcle Memory
 
-The Employee Portal root must contain exactly these canonical context files:
+The target repo should keep Parcle-facing docs in `PARCLE_MEMORY_DIR`, which defaults to:
 
+```text
+docs/parcle_memory
+```
+
+Put Markdown files there, for example:
+
+- `README.md`
 - `API_DOCUMENTATION.md`
 - `PARCLE_MEMORY.md`
-- `README.md`
+- `incidents/*.md`
+
+If this folder does not exist yet, the ingestion script falls back to the old root-level files:
+`API_DOCUMENTATION.md`, `PARCLE_MEMORY.md`, and `README.md`.
 
 Validate them without writing anything:
 
@@ -102,7 +118,7 @@ python -m scripts.ingest_parcle
 ```
 
 Use `--project-path C:/path/to/employee-portal` to override `EMPLOYEE_PORTAL_PATH`.
-The script submits the complete Markdown files with `client.ingest_file(user_id=PARCLE_USER_ID, file=...)`.
+The script submits each Markdown file with `client.ingest_file(user_id=PARCLE_USER_ID, file=...)`.
 Parcle may apply its own internal chunking/indexing. Treat this as a one-time seed step for the shared system memory;
 rerun only when you intentionally want Parcle to ingest refreshed source documentation.
 
@@ -114,9 +130,11 @@ The searchable memory is not stored in this agent repository. It is stored in th
 PARCLE_USER_ID=system_user
 ```
 
-Separately, the human-readable local audit trail is stored at `<EMPLOYEE_PORTAL_PATH>/docs/agent_decisions.md`.
-After every successful incident, that decision is both appended to the local audit file and written into Parcle as
-dialog memory with `client.ingest_dialog(...)` so later searches can use it.
+Separately, the human-readable incident trail is stored in
+`<EMPLOYEE_PORTAL_PATH>/<PARCLE_MEMORY_DIR>/agent_decisions.md`, and each run writes a separate incident file under
+`<EMPLOYEE_PORTAL_PATH>/<PARCLE_MEMORY_DIR>/incidents/`. These files are committed to the target repo and can persist
+through GitHub. The incident file is ingested with `client.ingest_file(...)`, and the decision is also written into
+Parcle as dialog memory with `client.ingest_dialog(...)`.
 
 ## Run locally
 
@@ -137,8 +155,9 @@ curl -X POST http://localhost:8001/api/v1/incidents/resolve \
   -d '{"incident":"Users cannot update their profile after the validation rollout"}'
 ```
 
-The response contains `branch_name`, `files_modified`, `documentation_updated`, `commit_hash`, validation details,
-and a summary. Failures from external integrations or validation return an error without pushing anything.
+The response contains `branch_name`, `files_modified`, `documentation_updated`, `incident_record_path`,
+`commit_hash`, `pull_request_url`, validation details, and a summary. Failures from external integrations or
+validation return an error before PR creation.
 
 ## Testing and visualization
 
@@ -148,7 +167,8 @@ python -m scripts.generate_graph
 ```
 
 The visualization script writes `docs/incident_workflow.mmd`. Every successful target-repository run appends its
-evidence and decisions to `docs/agent_decisions.md`, syncs the decision to Parcle, and then commits locally.
+evidence and decisions to `<PARCLE_MEMORY_DIR>/agent_decisions.md`, writes a separate incident report under
+`<PARCLE_MEMORY_DIR>/incidents/`, syncs the report to Parcle, and then commits locally.
 
 ## Docker
 

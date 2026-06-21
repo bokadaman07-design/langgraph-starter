@@ -28,9 +28,14 @@ class Settings:
     enterpro_command: str | None
     enterpro_workspace_id: str | None
     employee_portal_path: Path
+    parcle_memory_dir: str
     external_request_timeout: float
     validation_command: str
+    require_clean_target_repo: bool
     enable_git_push: bool
+    github_token: str | None
+    github_base_branch: str
+    github_api_url: str
     log_level: str
 
     @classmethod
@@ -45,9 +50,14 @@ class Settings:
             enterpro_command=os.getenv("ENTERPRO_COMMAND"),
             enterpro_workspace_id=os.getenv("ENTERPRO_WORKSPACE_ID"),
             employee_portal_path=Path(os.getenv("EMPLOYEE_PORTAL_PATH", ".")).resolve(),
+            parcle_memory_dir=os.getenv("PARCLE_MEMORY_DIR", "docs/parcle_memory"),
             external_request_timeout=float(os.getenv("EXTERNAL_REQUEST_TIMEOUT", "60")),
             validation_command=os.getenv("VALIDATION_COMMAND", "pytest -q"),
+            require_clean_target_repo=_as_bool(os.getenv("REQUIRE_CLEAN_TARGET_REPO"), default=False),
             enable_git_push=_as_bool(os.getenv("ENABLE_GIT_PUSH"), default=False),
+            github_token=os.getenv("GITHUB_TOKEN") or os.getenv("GH_TOKEN"),
+            github_base_branch=os.getenv("GITHUB_BASE_BRANCH", "main"),
+            github_api_url=os.getenv("GITHUB_API_URL", "https://api.github.com"),
             log_level=os.getenv("LOG_LEVEL", "INFO"),
         )
 
