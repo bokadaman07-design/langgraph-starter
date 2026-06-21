@@ -27,9 +27,12 @@ class AgentState(TypedDict, total=False):
     files_modified: list[str]
     validation: dict[str, Any]
     decision_log_path: str
+    incident_record_path: str
     decision_entry: str
     parcle_decision_sync: dict[str, Any]
     commit_hash: str
+    push: dict[str, Any]
+    pull_request_url: str | None
     documentation_updated: bool
     summary: str
     errors: list[str]

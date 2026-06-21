@@ -18,6 +18,9 @@ class FakeParcle:
         assert documents[0].metadata["content_type"] == "incident_decision"
         return {"location": "test-memory", "documents_submitted": len(documents)}
 
+    def ingest_files(self, files):
+        return {"location": "test-memory", "files_submitted": len(files)}
+
 
 class FakeGroq:
     def classify_request(self, request: str, documents: list[ParcleDocument]) -> RequestClassification:
@@ -82,21 +85,27 @@ def test_complete_graph_creates_local_branch_and_commit(tmp_path: Path):
         enterpro_command=None,
         enterpro_workspace_id=None,
         employee_portal_path=tmp_path,
+        parcle_memory_dir="docs/parcle_memory",
         external_request_timeout=1,
         validation_command="git status --short",
+        require_clean_target_repo=False,
         enable_git_push=False,
+        github_token=None,
+        github_base_branch="main",
+        github_api_url="https://api.github.com",
         log_level="INFO",
     )
     services = WorkflowServices(FakeParcle(), FakeGroq(), FakeEnterPro(), config)  # type: ignore[arg-type]
 
     result = create_graph(services).invoke({"incident": "Users cannot update profile"})
 
-    assert result["branch_name"].startswith("incident/")
+    assert result["branch_name"].startswith("ai/")
     assert result["commit_hash"] == _run(tmp_path, "rev-parse", "HEAD")
     assert result["documentation_updated"] is True
-    assert "docs/agent_decisions.md" in result["files_modified"]
+    assert "docs/parcle_memory/agent_decisions.md" in result["files_modified"]
+    assert result["incident_record_path"].startswith("docs/parcle_memory/incidents/")
     assert result["validation"]["passed"] is True
-    assert "not pushed" in result["summary"]
+    assert "Pull request: not created" in result["summary"]
     assert _run(tmp_path, "remote") == ""
 
 
@@ -105,12 +114,13 @@ def test_workflow_has_all_required_nodes():
         "receive_incident", "search_parcle", "classify_request", "return_information",
         "analyze_incident", "generate_enterpro_prompt",
         "create_git_branch", "execute_enterpro", "validate_changes", "update_decision_log",
-        "sync_decision_to_parcle", "commit_changes", "return_summary",
+        "sync_decision_to_parcle", "commit_changes", "push_branch", "create_pull_request",
+        "return_summary",
     ]
     assert CODE_CHANGE_ORDER == [
         "analyze_incident", "generate_enterpro_prompt", "create_git_branch", "execute_enterpro",
         "validate_changes", "update_decision_log", "sync_decision_to_parcle", "commit_changes",
-        "return_summary",
+        "push_branch", "create_pull_request", "return_summary",
     ]
 
 
@@ -133,9 +143,14 @@ def test_informational_request_skips_enter_and_git(tmp_path: Path):
         enterpro_command=None,
         enterpro_workspace_id=None,
         employee_portal_path=tmp_path,
+        parcle_memory_dir="docs/parcle_memory",
         external_request_timeout=1,
         validation_command="git status --short",
+        require_clean_target_repo=True,
         enable_git_push=False,
+        github_token=None,
+        github_base_branch="main",
+        github_api_url="https://api.github.com",
         log_level="INFO",
     )
     services = WorkflowServices(FakeParcle(), FakeGroq(), FailingEnterPro(), config)  # type: ignore[arg-type]

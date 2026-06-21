@@ -19,6 +19,8 @@ NODE_ORDER = [
     "update_decision_log",
     "sync_decision_to_parcle",
     "commit_changes",
+    "push_branch",
+    "create_pull_request",
     "return_summary",
 ]
 
@@ -31,6 +33,8 @@ CODE_CHANGE_ORDER = [
     "update_decision_log",
     "sync_decision_to_parcle",
     "commit_changes",
+    "push_branch",
+    "create_pull_request",
     "return_summary",
 ]
 
@@ -63,3 +67,6 @@ def create_graph(services: WorkflowServices | None = None):
 
 
 graph = create_graph()
+
+mermaid_code = graph.get_graph().draw_mermaid()
+print(mermaid_code)

@@ -5,6 +5,9 @@ import shutil
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
+
+import requests
 
 
 class GitError(RuntimeError):
@@ -12,8 +15,9 @@ class GitError(RuntimeError):
 
 
 class GitClient:
-    def __init__(self, project_path: Path):
+    def __init__(self, project_path: Path, require_clean: bool = True):
         self.project_path = project_path
+        self.require_clean = require_clean
 
     def _run(self, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
         if shutil.which("git") is None:
@@ -42,12 +46,14 @@ class GitClient:
                 + ", ".join(changed)
             )
 
-    def create_incident_branch(self, incident: str, now: datetime | None = None) -> str:
+    def create_incident_branch(self, incident: str, branch_source: str | None = None, now: datetime | None = None) -> str:
         self.ensure_repository()
-        self.ensure_clean()
-        slug = re.sub(r"[^a-z0-9]+", "-", incident.lower()).strip("-")[:48] or "incident"
+        if self.require_clean:
+            self.ensure_clean()
+        source = branch_source or incident
+        slug = re.sub(r"[^a-z0-9]+", "-", source.lower()).strip("-")[:48] or "incident"
         timestamp = (now or datetime.now(timezone.utc)).strftime("%Y%m%d-%H%M%S")
-        branch = f"incident/{timestamp}-{slug}"
+        branch = f"ai/{timestamp}-{slug}"
         self._run("switch", "-c", branch)
         return branch
 
@@ -61,3 +67,74 @@ class GitClient:
         self._run("add", "--all")
         self._run("commit", "-m", message)
         return self._run("rev-parse", "HEAD").stdout.strip()
+
+    def push_branch(self, branch_name: str) -> None:
+        self._run("push", "--set-upstream", "origin", branch_name)
+
+    def create_pull_request(
+        self,
+        token: str,
+        branch_name: str,
+        base_branch: str,
+        title: str,
+        body: str,
+        api_url: str = "https://api.github.com",
+    ) -> dict[str, Any]:
+        owner, repo = self._github_owner_repo()
+        url = f"{api_url.rstrip('/')}/repos/{owner}/{repo}/pulls"
+        response = requests.post(
+            url,
+            json={"title": title, "head": branch_name, "base": base_branch, "body": body},
+            headers={
+                "Accept": "application/vnd.github+json",
+                "Authorization": f"Bearer {token}",
+                "X-GitHub-Api-Version": "2022-11-28",
+            },
+            timeout=30,
+        )
+        if response.status_code == 422:
+            existing = self._find_existing_pull_request(token, branch_name, base_branch, api_url)
+            if existing:
+                return existing
+        try:
+            response.raise_for_status()
+            payload = response.json()
+        except (requests.RequestException, ValueError) as exc:
+            raise GitError(f"GitHub pull request creation failed: {exc}") from exc
+        if not isinstance(payload, dict):
+            raise GitError("GitHub returned an unsupported pull request response")
+        return payload
+
+    def _find_existing_pull_request(
+        self, token: str, branch_name: str, base_branch: str, api_url: str
+    ) -> dict[str, Any] | None:
+        owner, repo = self._github_owner_repo()
+        url = f"{api_url.rstrip('/')}/repos/{owner}/{repo}/pulls"
+        response = requests.get(
+            url,
+            params={"head": f"{owner}:{branch_name}", "base": base_branch, "state": "open"},
+            headers={
+                "Accept": "application/vnd.github+json",
+                "Authorization": f"Bearer {token}",
+                "X-GitHub-Api-Version": "2022-11-28",
+            },
+            timeout=30,
+        )
+        if not response.ok:
+            return None
+        payload = response.json()
+        if isinstance(payload, list) and payload:
+            return payload[0]
+        return None
+
+    def _github_owner_repo(self) -> tuple[str, str]:
+        remote = self._run("remote", "get-url", "origin").stdout.strip()
+        patterns = (
+            r"github\.com[:/](?P<owner>[^/]+)/(?P<repo>[^/.]+)(?:\.git)?$",
+            r"github\.com/(?P<owner>[^/]+)/(?P<repo>[^/.]+)(?:\.git)?$",
+        )
+        for pattern in patterns:
+            match = re.search(pattern, remote)
+            if match:
+                return match.group("owner"), match.group("repo")
+        raise GitError(f"Cannot parse GitHub owner/repo from origin remote: {remote}")

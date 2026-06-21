@@ -15,29 +15,37 @@ EMPLOYEE_PORTAL_MEMORY_FILES = (
 
 
 class ParcleIngestionService:
-    def __init__(self, client: ParcleClient, project_path: Path):
+    def __init__(self, client: ParcleClient, project_path: Path, memory_dir: str = "docs/parcle_memory"):
         self.client = client
         self.project_path = project_path.resolve()
+        self.memory_path = (self.project_path / memory_dir).resolve()
 
     def load_documents(self) -> list[dict[str, Any]]:
-        missing = [name for name in EMPLOYEE_PORTAL_MEMORY_FILES if not (self.project_path / name).is_file()]
-        if missing:
-            raise FileNotFoundError(
-                f"Missing required Employee Portal memory files in {self.project_path}: {', '.join(missing)}"
-            )
+        if self.memory_path.is_dir():
+            files = sorted(self.memory_path.rglob("*.md"))
+            if not files:
+                raise FileNotFoundError(f"No Markdown files found in Parcle memory folder: {self.memory_path}")
+        else:
+            missing = [name for name in EMPLOYEE_PORTAL_MEMORY_FILES if not (self.project_path / name).is_file()]
+            if missing:
+                raise FileNotFoundError(
+                    f"Missing Parcle memory folder {self.memory_path} and required fallback files in "
+                    f"{self.project_path}: {', '.join(missing)}"
+                )
+            files = [self.project_path / name for name in EMPLOYEE_PORTAL_MEMORY_FILES]
 
         documents: list[dict[str, Any]] = []
-        for filename in EMPLOYEE_PORTAL_MEMORY_FILES:
-            path = self.project_path / filename
+        for path in files:
+            reference = path.relative_to(self.project_path).as_posix()
             content = path.read_text(encoding="utf-8")
             checksum = hashlib.sha256(content.encode("utf-8")).hexdigest()
             documents.append(
                 {
                     "path": path,
-                    "reference": filename,
+                    "reference": reference,
                     "metadata": {
                         "repository": "employee-portal",
-                        "source_path": filename,
+                        "source_path": reference,
                         "content_type": "project_documentation",
                         "sha256": checksum,
                         "indexed_at": datetime.now(timezone.utc).isoformat(),

@@ -17,6 +17,8 @@ graph TD;
     update_decision_log(update_decision_log)
     sync_decision_to_parcle(sync_decision_to_parcle)
     commit_changes(commit_changes)
+    push_branch(push_branch)
+    create_pull_request(create_pull_request)
     return_summary(return_summary)
     __end__([end]):::last
     __start__ --> receive_incident;
@@ -32,7 +34,9 @@ graph TD;
     validate_changes --> update_decision_log;
     update_decision_log --> sync_decision_to_parcle;
     sync_decision_to_parcle --> commit_changes;
-    commit_changes --> return_summary;
+    commit_changes --> push_branch;
+    push_branch --> create_pull_request;
+    create_pull_request --> return_summary;
     return_summary --> __end__;
     classDef default fill:#f2f0ff,line-height:1.2
     classDef first fill-opacity:0

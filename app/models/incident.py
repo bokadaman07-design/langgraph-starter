@@ -46,4 +46,6 @@ class IncidentResponse(BaseModel):
     documentation_updated: bool
     commit_hash: str
     summary: str
+    incident_record_path: str | None = None
+    pull_request_url: str | None = None
     validation: dict[str, Any] = Field(default_factory=dict)
